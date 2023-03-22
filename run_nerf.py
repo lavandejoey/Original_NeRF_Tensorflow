@@ -1,20 +1,31 @@
 import os
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-
 import sys
-import tensorflow as tf
+import logging
+import datetime
 import numpy as np
 import imageio
 import json
 import random
 import time
+import tensorflow as tf
 from run_nerf_helpers import *
 from load_llff import load_llff_data
 from load_deepvoxels import load_dv_data
 from load_blender import load_blender_data
 
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
+physical_devices = tf.config.list_physical_devices('GPU')
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
 tf.compat.v1.enable_eager_execution()
+
+# 配置日志记录器
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.INFO)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
 
 
 def batchify(fn, chunk):
@@ -617,7 +628,6 @@ def config_parser():
 
 
 def train():
-
     # 解析命令行参数并返回一个argparse.ArgumentParser 对象的实例
     parser = config_parser() 
     # 解析命令行参数
@@ -626,19 +636,22 @@ def train():
     # 如果设置了随机数种子参数，就使用它来设置随机种子
     if args.random_seed is not None:
         print('Fixing random seed', args.random_seed)
-        np.random.seed(args.random_seed)
-        tf.compat.v1.set_random_seed(args.random_seed)
+        np.random.seed(args.random_seed) # numpy种子
+        tf.compat.v1.set_random_seed(args.random_seed) # tensorflow种子
 
     # Load data 加载数据
-    # 加载 LLFF 数据集
     if args.dataset_type == 'llff':
+        # 加载 LLFF 数据集
+        # recenter: 是否将图像中心移动到坐标原点
+        # bd_factor: 相机远近平面与包围盒之间的距离因子
+        # spherify: 是否将场景球形化（将相机半径设置为平均相机距离）
         images, poses, bds, render_poses, i_test = load_llff_data(args.datadir, args.factor,
-                                                                  recenter=True, bd_factor=.75,
-                                                                  spherify=args.spherify)
-        hwf = poses[0, :3, -1]
-        poses = poses[:, :3, :4]
-        print('Loaded llff', images.shape,
-              render_poses.shape, hwf, args.datadir)
+                                                                recenter=True, bd_factor=.75,
+                                                                spherify=args.spherify)
+        hwf = poses[0, :3, -1]  # 相机的高度、宽度、焦距
+        poses = poses[:, :3, :4]  # 前 3 行为相机的旋转矩阵，最后一列为相机的平移向量
+        print('Loaded llff', images.shape, render_poses.shape, hwf, args.datadir)
+
         if not isinstance(i_test, list):
             i_test = [i_test]
 
@@ -648,6 +661,7 @@ def train():
             i_test = np.arange(images.shape[0])[::args.llffhold]
 
         i_val = i_test
+        # 训练集为非测试集的所有图像
         i_train = np.array([i for i in np.arange(int(images.shape[0])) if
                             (i not in i_test and i not in i_val)])
 
